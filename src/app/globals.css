@@ -9,11 +9,14 @@
 html,
 body {
   height: 100%;
+  overscroll-behavior-y: none;
 }
 
 body {
   background-color: #020617;
   color: #e2e8f0;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
 }
 
 /* Custom scrollbar for the message feed */
@@ -34,4 +37,21 @@ body {
 
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Visible keyboard focus everywhere (a11y). */
+:focus-visible {
+  outline: none;
+}
+
+/* Respect users who prefer reduced motion (a11y). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

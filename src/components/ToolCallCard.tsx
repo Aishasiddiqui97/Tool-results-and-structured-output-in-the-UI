@@ -6,7 +6,7 @@ import type { AnalyzeResumePart } from '@/lib/chat';
 import { ToolInputStreaming } from './ToolInputStreaming';
 import { ToolInputAvailable } from './ToolInputAvailable';
 import { ToolOutputCard } from './ToolOutputCard';
-import { ToolErrorState } from './ToolErrorState';
+import { ToolErrorCard } from './ToolErrorCard';
 
 const STATUS_META = {
   'input-streaming': {
@@ -44,7 +44,7 @@ function renderBody(part: AnalyzeResumePart, onRetry: () => void) {
         <ToolInputStreaming />
       );
     case 'output-error':
-      return <ToolErrorState errorText={part.errorText} onRetry={onRetry} />;
+      return <ToolErrorCard toolName="analyzeResume" errorText={part.errorText} onRetry={onRetry} />;
   }
 }
 

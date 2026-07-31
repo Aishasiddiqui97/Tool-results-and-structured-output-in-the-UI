@@ -1,8 +1,8 @@
-# ResumeScope — FE-07: Tool Results & Structured Output in the UI
+# ResumeScope - FE-08: Error States, Empty States & Edge Cases
 
 A real AI application (not a chatbot wrapper) that scores resumes using the **Vercel AI SDK**, typed tool parts, **Zod** schema validation, and **Framer Motion** animations.
 
-The assistant owns one server-side tool, `analyzeResume`. Its entire lifecycle — from "what the AI is about to do" through "what input was sent", "what result came back", and "what went wrong" — is rendered as four distinct, animated UI states. Results are never shown as raw JSON.
+FE-08 hardens the app against every way a chat can fail or feel empty. Every failure mode has its own designed UI: network drops, server errors, rate limits, tool failures, slow responses, and unexpected exceptions. Empty conversations, empty search results, and the loading skeleton are all first-class screens. The app never shows a raw stack trace and never crashes.
 
 ## Tech Stack
 
@@ -21,82 +21,92 @@ The assistant owns one server-side tool, `analyzeResume`. Its entire lifecycle �
 
 ```
 .
-├── src/
-│   ├── app/
-│   │   ├── api/
-│   │   │   └── chat/
-│   │   │       └── route.ts          # AI route: registers the tool, streams lifecycle
-│   │   ├── globals.css               # Tailwind + custom scrollbar
-│   │   ├── layout.tsx                # Root layout (dark theme)
-│   │   └── page.tsx                  # Main app UI (chat + empty state + samples)
-│   ├── components/
-│   │   ├── ToolCallCard.tsx          # Dispatcher: header + crossfade between states
-│   │   ├── ToolInputStreaming.tsx    # State A — animated loading, progress, steps
-│   │   ├── ToolInputAvailable.tsx    # State B — formatted input (cards/badges, no JSON)
-│   │   ├── ToolOutputCard.tsx        # State C — routes output to real UI components
-│   │   ├── ToolErrorState.tsx        # State D — designed error + retry button
-│   │   ├── ResumeScoreCard.tsx       # Animated score ring, strengths, improvements, keywords
-│   │   └── ChatMessage.tsx           # Renders message.parts (text, step-start, tool parts)
-│   ├── lib/
-│   │   ├── chat.ts                   # End-to-end typed tool map (UIMessage<..., Tools>)
-│   │   └── sampleResumes.ts          # Sample resumes incl. an error-triggering one
-│   └── tools/
-│       └── analyzeResume.ts          # AI SDK tool definition (Zod schema + execute)
-└── scripts/
-    ├── test-tool.mts                 # Unit check: schema, success path, error path
-    └── test-stream.mts               # E2E: mock-model stream lifecycle (states verified)
+src/
+  app/
+    api/chat/route.ts            # AI route: envelope protocol + fault injection
+    error.ts                     # Next.js error boundary (root-level crash)
+    globals.css                  # Tailwind, viewport, reduced-motion, focus ring
+    layout.tsx                   # Root layout + Viewport config
+    page.tsx                     # Suspense + ChatSkeleton fallback
+  components/
+    Chat.tsx                     # Orchestrator: useChat, error dispatch, slow timer
+    ChatMessage.tsx              # Renders message.parts incl. streaming/stopped
+    ChatSkeleton.tsx             # Message/Tool/ScoreCard skeletons (Suspense)
+    EmptyState.tsx               # Shared empty-state shell (icon + actions)
+    ErrorState.tsx               # Friendly error screen (+ fullPage for boundary)
+    FirstRun.tsx                 # Empty conversation: prompt chips + sample cards
+    NoResults.tsx                # No-search-results state
+    RateLimitCard.tsx            # 429 card: retry / upgrade / learn more
+    RetryBanner.tsx              # Connection-lost card: retry / cancel / new chat
+    ResumeScoreCard.tsx          # Animated score ring, strengths, improvements
+    SlowResponse.tsx             # "Still thinking" + progress + stop generation
+    ToolCallCard.tsx             # Dispatcher for tool part states
+    ToolErrorCard.tsx            # Tool failure card: details + retry tool
+  lib/
+    chat.ts                      # End-to-end typed tool map
+    errors.ts                    # [RS_ERR] envelope protocol + classifyError
+    sampleResumes.ts             # Sample resumes incl. error-triggering one
+    testMode.ts                  # ?test= URL switches for fault injection
+  tools/
+    analyzeResume.ts             # AI SDK tool definition (Zod schema + execute)
+scripts/
+  test-tool.mts                  # Unit check: schema, success path, error path
+  test-stream.mts                # E2E: mock-model stream lifecycle (states verified)
 ```
 
-> Note: the project uses the `src/` directory layout, so the API route lives at `src/app/api/chat/route.ts` (URL: `/api/chat`).
+> The project uses the `src/` layout, so the API route lives at `src/app/api/chat/route.ts` (URL: `/api/chat`).
 
 ---
 
-## AI Tool Contract
+## Failure & State Inventory
 
-**Tool Name:** `analyzeResume`
+Each scenario has a dedicated designed UI:
 
-**Purpose:** Analyzes resume quality using AI and returns a structured, typed score that the UI renders as a real component.
+| Scenario | Trigger | UI |
+| -------- | ------- | -- |
+| First-run empty conversation | Fresh page, no messages | `FirstRun` - prompt chips + sample resumes |
+| Empty input | Send with empty composer | Inline validation + shake |
+| Slow AI response | Response > 3s | `SlowResponse` - typing indicator, progress bar, Stop |
+| Network failure (no request) | `?test=network` or go offline | `RetryBanner` (Retry / Cancel / Start New Chat) |
+| Network failure mid-stream | Go offline mid-response | `RetryBanner` + Regenerate on partial message |
+| API error before streaming | `?test=server` (500) | `ErrorState` (Retry / Back to Home) |
+| Rate limit (429) | `?test=429` | `RateLimitCard` (Retry Later / Upgrade / Learn More) |
+| Error mid-stream | `?test=stream` | `RetryBanner` (stream kind) |
+| Tool failure | `?test=tool` or resume with "error" | `ToolErrorCard` (details + Retry Tool) |
+| User cancels generation | Stop button | Stopped chip + Regenerate |
+| No search results | Assistant "no results" | `NoResults` - Try another search |
+| Unexpected exception | Root-level error | `error.ts` boundary + `ErrorState` |
 
-**Input Schema:**
+## Error Protocol
 
-| Field        | Type   | Constraints                    |
-| ------------ | ------ | ------------------------------ |
-| `resumeText` | string | min 10, max 12,000 characters |
+The server encodes every failure into a compact envelope so the client can classify it instead of guessing:
 
-**Return Shape:**
+```
+[RS_ERR]{"code":"rate_limit","message":"...","retryAfter":15}
+```
 
-| Field         | Type       | Description                             |
-| ------------- | ---------- | --------------------------------------- |
-| `score`       | number     | 0–100 overall resume quality            |
-| `strengths`   | string[]   | Highlighted strengths                   |
-| `improvements`| string[]   | Concrete, actionable improvements       |
-| `keywords`    | string[]   | Detected skill keywords                 |
+- `src/lib/errors.ts` - `errorEnvelope()` / `decodeErrorEnvelope()` / `classifyError()`.
+- `classifyError()` returns one of `rate_limit | network | stream | server | tool | unknown`, with fallback heuristics for `Failed to fetch`, `fetch failed`, and HTTP 429 bodies.
+- The AI SDK surfaces non-2xx bodies and mid-stream `errorText` as `error.message` on the client (verified in `ai@5` internals: `fullStream` emits `{type:"error"}`, which becomes an SSE `error` chunk, which becomes `useChat.error`).
 
-**Execution:** Server-side tool executed through AI SDK `tool()` with a Zod `inputSchema` and an async `execute` function. The model decides when to call it (`toolChoice: "auto"`). The tool result is fed back to the model, which then writes a concise summary — so the stream always ends with human text after the structured result.
+## Fault Injection (testing)
 
----
+Append a query param to simulate failures without touching production code:
 
-## How the Tool Lifecycle Renders
+| Mode | Trigger | Behavior |
+| ---- | ------- | -------- |
+| `?test=network` | Client transport | `TypeError('Failed to fetch')` before request |
+| `?test=429` | Route | 429 + rate-limit envelope |
+| `?test=server` | Route | 500 before streaming |
+| `?test=stream` | Route | Streams ~2 chunks then throws mid-stream |
+| `?test=tool` | Route | `analyzeResume` forced to fail |
 
-AI SDK 5 exposes tools as **typed tool parts** inside `message.parts` (`type: "tool-analyzeResume"`). Each part has a `state`. The UI maps each state to its own component inside `ToolCallCard`, with a Framer Motion crossfade between states.
+## Accessibility & Mobile
 
-| State            | Component               | What the user sees                              |
-| ---------------- | ----------------------- | ----------------------------------------------- |
-| `input-streaming`| `ToolInputStreaming`    | Animated icon, progress bar, step checklist     |
-| `input-available`| `ToolInputAvailable`    | Resume doc card: word/char count, section chips, truncated preview |
-| `output-available`| `ToolOutputCard` → `ResumeScoreCard` | Animated score ring, strength badges, improvement list, keyword chips |
-| `output-error`   | `ToolErrorState`        | Error icon, friendly message, retry button      |
-
-The transition from `input-streaming` → `output-available` crossfades smoothly (opacity + y-slide) inside a stable card shell, so there are no layout jumps.
-
-## Error Testing
-
-Two ways to see the designed error state (requirement 7):
-
-1. **In the UI** — load the **“Trigger tool error”** sample resume (its text contains `"error"`). The tool’s `execute` throws, the stream emits `tool-output-error`, and the error card appears with a **Retry** button. The app never crashes.
-2. **Headless** — run `npm run test:tool` (throws + schema tests) or `npm run test:stream` (verifies the `tool-output-error` stream event with a mock model).
-
-The retry button calls `regenerate({ messageId })`, which re-runs the failed assistant step through the model.
+- Visually-hidden `aria-live` region announces status changes; streaming assistant messages announce via `aria-live="polite"`; error cards use `role="alert"`.
+- `prefers-reduced-motion` disables all decorative animation globally.
+- Visible `:focus-visible` ring everywhere; `overscroll-behavior: none` on mobile.
+- `viewportFit: cover` + `interactiveWidget: resizes-content` for iOS Safari keyboard; `visualViewport`-based keyboard inset fallback; `100dvh` layout.
 
 ---
 
@@ -133,7 +143,7 @@ Optionally override the model: `OPENAI_MODEL=gpt-4o-mini`.
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), click a sample resume, and watch the tool lifecycle render — then send a resume containing the word `error` to see the error state.
+Open [http://localhost:3000](http://localhost:3000). Test each failure with the `?test=...` switches above, click a sample resume for the happy path, and send a resume containing the word `error` to see the tool error state.
 
 ### 4. Verification commands
 
@@ -149,8 +159,8 @@ npm run test:stream   # stream: verifies tool lifecycle events (mock model, no A
 ## Deployment (Vercel)
 
 1. Push this repository to GitHub.
-2. In Vercel, **Add New → Project** and import the repo. Vercel auto-detects Next.js (zero-config).
-3. Add the environment variable `OPENAI_API_KEY` (Settings → Environment Variables).
+2. In Vercel, **Add New -> Project** and import the repo. Vercel auto-detects Next.js (zero-config).
+3. Add the environment variable `OPENAI_API_KEY` (Settings -> Environment Variables).
 4. **Deploy.** The `api/chat` route runs as a serverless function; `maxDuration` is set to 30s.
 5. (Optional) Set `OPENAI_MODEL` if you want a different model.
 

@@ -8,7 +8,9 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:tool": "node scripts/test-tool.mts",
-    "test:stream": "node scripts/test-stream.mts"
+    "test:stream": "node scripts/test-stream.mts",
+    "agent": "node --env-file-if-exists=.env.local scripts/agent.mts",
+    "test:agent": "node scripts/test-agent.mts"
   },
   "dependencies": {
     "@ai-sdk/openai": "2.0.117",
